@@ -20,6 +20,7 @@ work on this code are entirely for academic pruposes.
 
 dirname = os.path.dirname(os.path.abspath(__file__))
 parse_exe = os.path.join(dirname, "bin/parse")
+mt_parse_exe = os.path.join(dirname, "bin/mt_parse")
 log_dir = os.path.join(dirname, "logs/")
 output_dir = os.path.join(dirname, "output/")
 
@@ -31,6 +32,8 @@ def main():
     parser.add_argument('-w', '--wsize', help='sliding window size (def. 6)', default=6, type=int)
     parser.add_argument('-p', '--mod', help='hash modulus (def. 20)', default=20, type=int)
     parser.add_argument('-v', help='verbose',action='store_true')
+    parser.add_argument('-t', help='number of threads (def. 1)',default=1, type=int)
+    # parser.add_argument('--checks', help='additional correctness checking',action='store_true')
     parser.add_argument('--parsing',  help='stop after the parsing phase (debug only)',action='store_true')
     args = parser.parse_args()
         
@@ -41,11 +44,22 @@ def main():
     with open(logfile_name,"a") as logfile:  
         # ---------- parsing of the input file 
         start0 = start = time.time()
-        command = "{exe} {input} {output} -w {wsize} -p {modulus}".format(exe = parse_exe, 
+        if args.t == 1:
+            command = "{exe} {input} {output} -w {wsize} -p {modulus}".format(exe = parse_exe, 
                                                                         wsize=args.wsize, 
                                                                         modulus = args.mod, 
                                                                         input=args.input, 
                                                                         output=output_dir + file_name)
+        elif args.t > 1:
+            command = "{exe} {input} {output} -w {wsize} -p {modulus} -t {threads}".format(exe = mt_parse_exe, 
+                                                                                        wsize=args.wsize, 
+                                                                                        modulus = args.mod, 
+                                                                                        input=args.input, 
+                                                                                        output=output_dir + file_name,
+                                                                                        threads=args.t)
+        else:
+            print("invalid number of threads, must be 1 or more")
+            return   
         # if args.v: 
         #  command += " -v"
         print("==== Parsing. Command:", command)

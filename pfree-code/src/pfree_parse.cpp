@@ -1,5 +1,4 @@
 
-#include <string> // for std::string
 #include <iostream> // for cout
 #include <ctime> // for time_t
 #include <fstream> // for ifstream
@@ -125,7 +124,7 @@ void write_parse(const std::string input_path, const std::string output_path, st
 
 // write data from sorted dictionary and frequency table to 
 // output files with .dict and .occ extensions
-void write_dict_occ(const std::string output_path, std::vector<const std::string *> sorted_dict, std::map<size_t,phrase_entry> freq) {
+void write_dict_occ(const std::string output_path, std::vector<const std::string *> sorted_dict, std::map<size_t,phrase_entry>& freq) {
 
     assert(sorted_dict.size() == freq.size());
 
@@ -172,6 +171,31 @@ void overwrite_parse(const std::string output_path, std::map<size_t,phrase_entry
     parse_out.flush();
     parse_out.close();
     parse_in.close();
+}
+
+void recompute_occ_check(const std::string output_path, std::map<size_t,phrase_entry> freq) {
+
+    // re-open old parse
+    std::ifstream parse_in(output_path + ".parse_old", std::ofstream::in | std::fstream::binary);
+    // recompute occ as an extra check 
+    std::vector<uint32_t> occ(freq.size()+1,0); // ranks are zero based 
+    uint64_t hash;
+    while(parse_in.read(reinterpret_cast<char *>(&hash), sizeof(hash))) {
+        uint32_t rank = freq.at(hash).rank;
+        occ[rank]++;
+    }
+
+    // check old and recomputed occ coincide 
+    for(auto& p : freq) assert(p.second.occ == occ[p.second.rank]);
+}
+
+void print_bwt(const std::string output_path, int c) {
+    std::ifstream parse_in(output_path + ".dict", std::ofstream::in | std::fstream::binary);
+    for (int i = 0; i < c; ++i) {
+        char c[8];
+        parse_in.read(c, 8);
+        std::cout << c;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -230,6 +254,9 @@ int main(int argc, char **argv) {
     std::cout << "Generating remapped parse file\n";
     overwrite_parse(output_path, freq);
     std::cout << "Remapping parse file took: " << difftime(time(NULL),start_phase) << " wall clock seconds\n";  
-    std::cout << "==== Elapsed time: " << difftime(time(NULL),start_main) << " wall clock seconds\n";    
+    std::cout << "==== Elapsed time: " << difftime(time(NULL),start_main) << " wall clock seconds\n";  
+    std::cout << "Performing additional checks\n";  
+    recompute_occ_check(output_path, freq);
+    print_bwt(output_path, 256);
     return 0;
 }

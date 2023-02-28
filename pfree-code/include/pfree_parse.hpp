@@ -107,4 +107,10 @@ void write_parse_debug(const std::string input_path, const std::string output_pa
 void write_parse(const std::string input_path, const std::string output_path, std::map<size_t,phrase_entry>& freq, const size_t w, const size_t p);
 
 // write data from sorted dictionary and frequency table to output files with .dict and .occ extensions
-void write_dict_occ(const std::string output_path, std::vector<const std::string *> sorted_dict, std::map<size_t,phrase_entry> freq);
+void write_dict_occ(const std::string output_path, std::vector<const std::string *> sorted_dict, std::map<size_t,phrase_entry>& freq);
+
+// overwrite .parse_old with .parse (replace hash IDs with ranks)
+void overwrite_parse(const std::string output_path, std::map<size_t,phrase_entry> freq);
+
+// additional check for parse re-write step
+void recompute_occ_check(const std::string output_path, std::map<size_t,phrase_entry> freq);

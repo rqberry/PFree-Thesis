@@ -12,10 +12,13 @@ INCLUDE=/mnt/c/Users/qberr/csci/reed/csci470/prefix-free/include
 
 OBJ=$(SRC:.cpp=.o)
 
-all: $(BIN)/parse
+all: $(BIN)/parse $(BIN)/mt_parse
 
 $(BIN)/parse: $(SRC)/pfree_parse.cpp 
 		$(CPP) $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
+
+$(BIN)/mt_parse: $(SRC)/mt_pfree_parse.cpp 
+		$(CPP) -pthread $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
 
 gsa/gsacak.o: gsa/gsacak.c gsa/gsacak.h
 		$(CC) -c -o $@ $<
