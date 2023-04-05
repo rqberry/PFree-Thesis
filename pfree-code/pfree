@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import time, argparse, subprocess, os.path
+import time, argparse, subprocess, os
 
 Description = """
 Reed College Undergraduate Thesis Project by Ryan Quisenberry
@@ -138,9 +138,8 @@ def main():
         # ---- delete intermediate files
         if args.k == False:
             print("==== Deleting temporary files.") # no need to show the command
-            command = "rm -f {output}.parse_old".format(output=output_dir + file_name)
-            if(execute_command(command,logfile,logfile_name)!=True):
-                return
+            command = "rm {output}.parse_old*".format(output=output_dir + file_name)
+            os.system(command)
 
     print("==== Done")
 

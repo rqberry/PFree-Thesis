@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <cstdint>
 #include <vector>
 #include <cassert>
 #include <unordered_set>

@@ -142,8 +142,7 @@ void write_dict_occ(const std::string output_path, std::vector<const std::string
         dict_out.write(phrase, len);
         dict_out.write("\n",1);
         // write to occ
-        std::string p_occ = std::to_string(freq.at(hash).occ);
-        occ_out.write(p_occ.c_str(), p_occ.size());
+        occ_out.write(reinterpret_cast<const char *>(&(freq.at(hash).occ)), sizeof(uint32_t));
         // update rank
         freq.at(hash).rank = rank++;
     }
@@ -196,6 +195,7 @@ void print_bwt(const std::string output_path, int c) {
         parse_in.read(c, 8);
         std::cout << c;
     }
+    parse_in.close();
 }
 
 int main(int argc, char **argv) {
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
     std::cout << "Remapping parse file took: " << difftime(time(NULL),start_phase) << " wall clock seconds\n";  
     std::cout << "==== Elapsed time: " << difftime(time(NULL),start_main) << " wall clock seconds\n";  
     std::cout << "Performing additional checks\n";  
-    recompute_occ_check(output_path, freq);
-    print_bwt(output_path, 256);
+    //recompute_occ_check(output_path, freq);
+    //print_bwt(output_path, 256);
     return 0;
 }

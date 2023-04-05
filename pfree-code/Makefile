@@ -1,8 +1,8 @@
 
 CC=gcc
 CFLAGS=-Wall -Wextra -Werror -pedantic
-CPP=g++ -std=c++17
-CPPFLAGS=-Wall -Wextra -Werror -pedantic -std=c++17 -ggdb
+CPP=g++-11 -std=c++20
+CPPFLAGS=-Wall -Wextra -Werror -pedantic -ggdb
 
 OUT=output
 BIN=bin
