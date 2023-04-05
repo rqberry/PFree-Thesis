@@ -14,51 +14,34 @@
 std::atomic_size_t latch_atomic;
 
 // helper function, updates freq data structure and checks for errors
-uint64_t mt_update_freq(std::string phrase, [[maybe_unused]] std::unordered_map<size_t,phrase_entry> *freq) {
+uint64_t mt_update_freq(struct Thread *t, std::string phrase) {
     
     
     // this is the hash of the complete phrase, this is what is written to the parse
     uint64_t hash = kr_hash64(phrase);
-    
-    if (freq->find(hash) == freq->end()) { // new phrase
+    if (t->freq->find(hash) == t->freq->end()) { // new phrase
         
         phrase_entry new_phrase;
         new_phrase.occ = 1;
         new_phrase.p = phrase;
-        freq->emplace(std::pair(hash,new_phrase));
+        t->freq->emplace(std::pair(hash,new_phrase));
     
     } else { // known phrase
 
-        freq->at(hash).occ++;
+        t->freq->at(hash).occ++;
     
-        if (freq->at(hash).occ <= 0) {
+        if (t->freq->at(hash).occ <= 0) {
             std::cerr << "(!) parse_debug : Max occurances reached.\n";
             exit(1);
         }
-        if (freq->at(hash).p != phrase) {
+        if (t->freq->at(hash).p != phrase) {
             std::cerr << "(!) parse_debug : Hash collision.\n";// << (*freq)[hash].p << "\n" << phrase << "\n";
             exit(1);    
         }
     }
-    
 
     return hash;
 }
-
-
-struct Thread {
-    size_t id;
-    int start;
-    int stop;
-
-    //size_t saw = 0;         // for debugging
-    //size_t sent = 0;        // for debugging
-    //size_t recieved = 0;        // for debugging
-    //std::vector<std::map<size_t,phrase_entry>> *freqs;
-    std::unordered_map<size_t,phrase_entry> *freq; // make this unordered
-    std::vector<std::vector<std::string>> *mail;
-    std::unordered_map<uint64_t,size_t> *E;
-};
 
 // write data from sorted dictionary and frequency table to 
 // output files with .dict and .occ extensions
@@ -185,6 +168,12 @@ void mt_write_parse(struct Thread *t,
     if (t->id) pos += skipped + w;  // or 0 for the first word  
     while ((c = fin.get()) != EOF) {
 
+        
+        if (c != (int)'A' && c != (int)'C' && c != (int)'G' && c != (int)'T') {
+            std::cerr << " (!) parse_debug : input does not belong to \"ACGT\" only alphabet : " << c << "=\'" << (char)c << "\'" << std::endl;
+            exit(1);
+        }
+
         phrase.append(1,c);
         window.addchar(c);
         parsed++;
@@ -196,7 +185,7 @@ void mt_write_parse(struct Thread *t,
             
             if (t->id == window_id) { // phrase belongs to me
 
-                uint64_t phrase_hash = mt_update_freq(phrase,t->freq); 
+                uint64_t phrase_hash = mt_update_freq(t, phrase); 
                 parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
 
             } else { // phrase belongs to another thread
@@ -204,7 +193,6 @@ void mt_write_parse(struct Thread *t,
             }
             phrase.erase(0,phrase.size() - w); // keep only the last w chars 
             window_id = t->E->at(window.hash); // update phrase id to be new start window
-            //save_update_word(*arg,word,*wordFreq,d->parse,d->last,d->sa,pos);
             
             if (t->start + skipped + parsed >= t->stop + w) {
                 parse_old.close(); 
@@ -217,7 +205,7 @@ void mt_write_parse(struct Thread *t,
         phrase.append(w,'$');
         if (t->id == window_id) { // phrase belongs to me
 
-            uint64_t phrase_hash = mt_update_freq(phrase,t->freq); 
+            uint64_t phrase_hash = mt_update_freq(t, phrase); 
             parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
 
         } else { // phrase belongs to another thread
@@ -236,7 +224,7 @@ void mt_write_dict(struct Thread *t, const std::string output_path, const size_t
             std::vector<std::string> *inbox = &((*(t->mail))[from + (NUM_THREADS * t->id)]);
 
             while (inbox->size() > 0) {
-                mt_update_freq(inbox->back(),t->freq);
+                mt_update_freq(t, inbox->back());
                 inbox->pop_back();
             }
         }   
@@ -266,52 +254,8 @@ void mt_write_dict(struct Thread *t, const std::string output_path, const size_t
     
 }
 
-
-
-/*
-void send(const size_t id, const size_t th, std::vector<std::string> mail[]) {
-    for (size_t to = 0; to < th; ++to) {
-        if (to != id) {
-            std::cout << id + to << std::endl;
-            
-        }
-    }
-}
-
-void read(const size_t id, const size_t th, std::vector<std::string> mail[]) {
-    for (size_t from = 0; from < th; ++from) {
-        if (from != id) {
-           assert(mail[from + (th * id)].size() == 1);
-        }
-    }
-}
-
-void mt(const size_t id, const size_t th, std::vector<std::string> mail[], std::latch latch) {
-    send(id,th,mail);
-    latch.count_down();
-    latch.wait();
-    read(id,th,mail);
-}
-*/
-
-// all possible w-length strings
-
 // Theta (w)
-//
-// NOT A REASONABLE APPROACH FOR LARGER ALPHABETS
-//
-/*
-void buildDelims(uint64_t hash, int k, const size_t p, std::map<uint64_t,size_t> *E) {
-    if (k==0) {
-        if (hash % p == 0) E->insert(std::pair<uint64_t,size_t>(hash, -1));
-    } else {
-        buildDelims((256*hash + (int)'A') % 1999999973, k-1, p, E);
-        buildDelims((256*hash + (int)'C') % 1999999973, k-1, p, E);
-        buildDelims((256*hash + (int)'G') % 1999999973, k-1, p, E);
-        buildDelims((256*hash + (int)'T') % 1999999973, k-1, p, E);
-    }
-}
-*/
+// all possible w-length strings
 void buildDelims(uint64_t hash, int k, const size_t p, std::vector<uint64_t> *delims) {
     if (k==0) {
         if (hash % p == 0) delims->push_back(hash);
@@ -341,10 +285,12 @@ std::unordered_map<uint64_t,size_t> buildEMap(const size_t w, const size_t p, co
 }
 
 void mt_parse(const std::string input_path, 
-              [[maybe_unused]] const std::string output_path, 
+              const std::string output_path, 
               const size_t w, 
               const size_t p, 
               const size_t NUM_THREADS) {
+
+    std::cout << " ==== Building E" << std::endl;
 
     std::unordered_map<uint64_t,size_t> E = buildEMap(w, p, NUM_THREADS);
 
@@ -357,7 +303,7 @@ void mt_parse(const std::string input_path,
     std::ifstream fin;
 	fin.open(input_path, std::ifstream::in | std::ifstream::ate);
 	while (fin.fail()) {
-		std::cerr << "(!) parse_debug : could not open input file \n";
+		std::cerr << "(!) parse_debug : could not open input file: " << input_path << "\n";
         exit(1);
 	}
     
@@ -365,6 +311,8 @@ void mt_parse(const std::string input_path,
     fin.close();
 
     size_t work_size = file_size / NUM_THREADS;
+
+    std::cout << " ===== Beginning thread launch" << std::endl;
 
     for (size_t id = 0; id < NUM_THREADS; id++) {
         
@@ -422,6 +370,8 @@ void mt_parse(const std::string input_path,
     //sent.wait();
 
     std::for_each(threads.begin(), threads.end(), [](std::thread &th){th.join();});
+
+    std::cout << " ==== Threads returned" << std::endl;
 
     
     /*
