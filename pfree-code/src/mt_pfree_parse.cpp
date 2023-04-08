@@ -6,6 +6,9 @@
 #include <latch> // for latch
 #include <thread> // for thread 
 
+#include <string_view> // also join?
+#include <ranges> // for join
+
 #include "../include/mt_pfree_parse.hpp" // for bwt_flags
 #include "../include/pfree.hpp" 
 
@@ -13,28 +16,56 @@
 
 std::atomic_size_t latch_atomic;
 
+
 // helper function, updates freq data structure and checks for errors
-uint64_t mt_update_freq(struct Thread *t, std::string phrase) {
+void mt_merge_freq(std::unordered_map<size_t, phrase_entry> *freq_table1, std::unordered_map<size_t, phrase_entry> *freq_table2) {
+    
+    for (std::pair<size_t, phrase_entry> phrase : *freq_table2) {
+
+        // this is the hash of the complete phrase, this is what is written to the parse
+        if (freq_table1->find(phrase.first) == freq_table1->end()) { // new phrase
+
+            freq_table1->emplace(phrase);
+            freq_table2->erase(phrase.first);
+        
+        } else { // known phrase
+
+            freq_table1->at(phrase.first).occ += phrase.second.occ;
+        
+            if (freq_table1->at(phrase.first).occ <= 0) {
+                std::cerr << "(!) parse_debug : Max occurances reached in merge.\n";
+                exit(1);
+            }
+            if (freq_table1->at(phrase.first).p != phrase.second.p) {
+                std::cerr << "(!) parse_debug : Hash collision in merge.\n";// << (*freq)[hash].p << "\n" << phrase << "\n";
+                exit(1);    
+            }
+        }
+    }
+}
+
+// helper function, updates freq data structure and checks for errors
+uint64_t mt_update_freq(std::unordered_map<size_t, phrase_entry> *freq_table, std::string phrase) {
     
     
     // this is the hash of the complete phrase, this is what is written to the parse
     uint64_t hash = kr_hash64(phrase);
-    if (t->freq->find(hash) == t->freq->end()) { // new phrase
+    if (freq_table->find(hash) == freq_table->end()) { // new phrase
         
         phrase_entry new_phrase;
         new_phrase.occ = 1;
         new_phrase.p = phrase;
-        t->freq->emplace(std::pair(hash,new_phrase));
+        freq_table->emplace(std::pair(hash,new_phrase));
     
     } else { // known phrase
 
-        t->freq->at(hash).occ++;
+        freq_table->at(hash).occ++;
     
-        if (t->freq->at(hash).occ <= 0) {
+        if (freq_table->at(hash).occ <= 0) {
             std::cerr << "(!) parse_debug : Max occurances reached.\n";
             exit(1);
         }
-        if (t->freq->at(hash).p != phrase) {
+        if (freq_table->at(hash).p != phrase) {
             std::cerr << "(!) parse_debug : Hash collision.\n";// << (*freq)[hash].p << "\n" << phrase << "\n";
             exit(1);    
         }
@@ -45,25 +76,28 @@ uint64_t mt_update_freq(struct Thread *t, std::string phrase) {
 
 // write data from sorted dictionary and frequency table to 
 // output files with .dict and .occ extensions
+/*
 void mt_write_dict_occ(struct Thread *t, const std::string output_path, std::vector<const std::string *> sorted_dict) {
 
     assert(sorted_dict.size() == t->freq->size());
 
     // open output files for writing
-    std::ofstream dict_out(output_path + ".dict_" + std::to_string(t->id), std::ofstream::out | std::fstream::binary);
-    std::ofstream occ_out(output_path + ".occ_" + std::to_string(t->id), std::ofstream::out | std::fstream::binary);
+    std::ofstream dict_out(output_path + "." + std::to_string(t->id) + ".dict", std::ofstream::out | std::fstream::binary);
+    std::ofstream occ_out(output_path + "." + std::to_string(t->id) +  ".occ", std::ofstream::out | std::fstream::binary);
 
     uint32_t rank = 1;
     for (auto p: sorted_dict) {
         // determine data
         const char *phrase = (*p).data();
-        size_t len = (*p).size();
+        [[maybe_unused]] size_t len = (*p).size();
         uint64_t hash = kr_hash64(*p);
         // write to dict
-        dict_out.write(phrase, len);
-        dict_out.write("\n",1);
+        dict_out << phrase << '\n';
+        //dict_out.write(phrase, len);
+        //dict_out.write("\n",1);
         // write to occ
-        occ_out.write(reinterpret_cast<const char *>(&(t->freq->at(hash).occ)), sizeof(uint32_t));
+        //occ_out.write(reinterpret_cast<const char *>(&(t->freq->at(hash).occ)), sizeof(uint32_t));
+        occ_out << t->freq->at(hash).occ;
         // update rank
         t->freq->at(hash).rank = rank++;
     }
@@ -73,19 +107,31 @@ void mt_write_dict_occ(struct Thread *t, const std::string output_path, std::vec
     dict_out.close();
     occ_out.flush();
     occ_out.close();
-}
+}*/
 
 // overwrite the parse with the ranks of the strings
-void mt_overwrite_parse(struct Thread *t,const std::string output_path) {
+void mt_overwrite_parse(struct Thread *t, const std::vector<std::unordered_map<size_t,phrase_entry> *> freqs,const std::string output_path) {
 
     // open old parse file for reading and new parse file for output
-    std::ifstream parse_in(output_path + ".parse_old_" + std::to_string(t->id), std::ofstream::in | std::fstream::binary);
-    std::ofstream parse_out(output_path + ".parse_" + std::to_string(t->id), std::ofstream::out | std::fstream::binary);
+    std::ifstream parse_in(output_path + "." + std::to_string(t->id) + ".parse_old", std::ofstream::in | std::fstream::binary);
+    std::ofstream parse_out(output_path + "." + std::to_string(t->id) + ".parse", std::ofstream::out | std::fstream::binary);
 
     uint64_t hash;
-    for (uint32_t i = 0; i < t->freq->size(); ++i) {
-        parse_in.read(reinterpret_cast<char *>(&hash), sizeof(hash));
-        uint32_t rank = t->freq->at(hash).rank;
+    uint32_t rank;
+    while (parse_in.read(reinterpret_cast<char *>(&hash), sizeof(hash))) {
+
+        bool foundHash = false;
+        size_t i = 0;
+        while(i < freqs.size() && !foundHash) {
+        
+            if (freqs[i]->find(hash) != freqs[i]->end()) {
+                rank = freqs[i]->at(hash).rank;
+                foundHash = true;
+            }
+
+            i++;
+        }
+        assert(foundHash);
         parse_out.write(reinterpret_cast<char *>(&rank), sizeof(rank));
     }
 
@@ -116,7 +162,8 @@ void mt_write_parse(struct Thread *t,
         exit(1);
 	}
 
-    std::ofstream parse_old(output_path + ".parse_old_" + std::to_string(t->id), std::ofstream::out | std::ios::binary);
+    std::ofstream parse_old(output_path + "." + std::to_string(t->id) + ".parse_old", std::ofstream::out | std::ios::binary);
+    //std::ofstream parse_old(output_path + "." + std::to_string(t->id) + ".parse_old", std::ofstream::out);
 
     // init phrase
     std::string phrase("");
@@ -160,12 +207,14 @@ void mt_write_parse(struct Thread *t,
         parsed = w;
         skipped -= w; // ... so w less chars have been skipped
         phrase.erase(0,phrase.size() - w); // keep only the last w chars 
+        //for (auto p : *(t->E)) std::cout << p.first << '\n';
         window_id = t->E->at(window.hash);
     }
 
-
+    uint64_t phrase_start = t->start + skipped;
+    if (t->id == 0) phrase_start--; // off by 1 error otherwise
     uint64_t pos = t->start; // ending position+1 in text of previous word
-    if (t->id) pos += skipped + w;  // or 0 for the first word  
+    if (t->id != 0) pos += skipped + w;  // or 0 for the first word  
     while ((c = fin.get()) != EOF) {
 
         
@@ -182,15 +231,31 @@ void mt_write_parse(struct Thread *t,
 
             // end of word, save it and write its full hash to the output file
             // pos is the ending position+1 of previous word and is updated in the next call
+
+            uint64_t phrase_hash;
             
             if (t->id == window_id) { // phrase belongs to me
 
-                uint64_t phrase_hash = mt_update_freq(t, phrase); 
-                parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
+                phrase_hash = mt_update_freq((*(t->mail))[t->id + (NUM_THREADS * t->id)], phrase); 
+                
+                //parse_old << "<<<" << phrase << '\n';
 
             } else { // phrase belongs to another thread
-                (*(t->mail))[t->id + (NUM_THREADS * window_id)].push_back(phrase); // send mail from me to other thread
+
+                phrase_hash = mt_update_freq((*(t->mail))[t->id + (NUM_THREADS * window_id)], phrase); 
+
+                //parse_old << ">>>(" << window_id << ")>>>" << phrase << '\n';
+
+                //phrase_hash = kr_hash64(phrase);
+                //(*(t->mail))[t->id + (NUM_THREADS * window_id)].push_back(phrase_start); // send mail from me to other thread
+                //(*(t->mail))[window_id][t->id].push_back(phrase_start); // send mail from me to other thread
+                
             }
+
+            // always write what you see to the parse
+            parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
+
+            phrase_start += phrase.size() - w;
             phrase.erase(0,phrase.size() - w); // keep only the last w chars 
             window_id = t->E->at(window.hash); // update phrase id to be new start window
             
@@ -201,36 +266,149 @@ void mt_write_parse(struct Thread *t,
         }
     } 
 
+
+
     if (t->id == NUM_THREADS - 1) {
+
+        uint64_t phrase_hash;
+
         phrase.append(w,'$');
         if (t->id == window_id) { // phrase belongs to me
 
-            uint64_t phrase_hash = mt_update_freq(t, phrase); 
-            parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
+            // only update freq table if its mine
+            phrase_hash = mt_update_freq((*(t->mail))[t->id + (NUM_THREADS * t->id)], phrase); 
+            
+            //parse_old << phrase_start << "<<<" << phrase << '\n';
+            
 
         } else { // phrase belongs to another thread
-            (*(t->mail))[t->id + (NUM_THREADS * window_id)].push_back(phrase); // send mail from me to other thread
+
+            //parse_old << phrase_start << ">>>" << phrase << '\n';
+            //(*(t->mail))[t->id + (NUM_THREADS * window_id)].push_back(phrase); // send mail from me to other thread
+            //phrase_hash = kr_hash64(phrase);
+            //(*(t->mail))[t->id + (NUM_THREADS * window_id)].push_back(phrase_start); // send mail from me to other thread
+            phrase_hash = mt_update_freq((*(t->mail))[t->id + (NUM_THREADS * window_id)], phrase); 
+
+            //parse_old << ">>>(" << window_id << ")>>>" << phrase << '\n';
+            //(*(t->mail))[window_id][t->id].push_back(phrase_start); // send mail from me to other thread
         }
+
+        parse_old.write(reinterpret_cast<const char *>(&phrase_hash),sizeof(phrase_hash));
+        //parse_old << phrase.substr(w,phrase.size());
+        parse_old.close(); 
+        return;
     }
 }
 
 //
 // Phase II of the algorithm, recieve mail and write dict
 //
-void mt_write_dict(struct Thread *t, const std::string output_path, const size_t NUM_THREADS) {
-    
-    for (size_t from = 0; from < NUM_THREADS; from++) {
-        if (from != t->id) { // skip self mail (should never be any)
-            std::vector<std::string> *inbox = &((*(t->mail))[from + (NUM_THREADS * t->id)]);
+void mt_write_dict(struct Thread *t, 
+                   [[maybe_unused]] const std::string input_path, 
+                   [[maybe_unused]] const std::string output_path, 
+                   [[maybe_unused]] const size_t w, 
+                   [[maybe_unused]] const size_t p,
+                   const size_t NUM_THREADS) {
 
-            while (inbox->size() > 0) {
-                mt_update_freq(t, inbox->back());
-                inbox->pop_back();
+    /*
+    std::ifstream fin;
+	fin.open(input_path, std::ifstream::in);
+	while (fin.fail()) {
+		std::cerr << "(!) parse_debug : could not open input file \n";
+        exit(1);
+	}
+    */
+    std::unordered_map<size_t,phrase_entry> *freq_table1 = (*(t->mail))[t->id + (NUM_THREADS * t->id)];
+    //std::ofstream mail(output_path + "." + std::to_string(t->id) + ".mail", std::ofstream::out | std::ios::binary);
+
+    for (size_t from = 0; from < NUM_THREADS; from++) {
+
+        if (from != t->id) {
+            //mt_merge_freq(t, (*(t->mail))[t->id + (NUM_THREADS * t->id)], (*(t->mail))[from + (NUM_THREADS * t->id)], msg);
+
+            std::unordered_map<size_t,phrase_entry> *freq_table2 = (*(t->mail))[from + (NUM_THREADS * t->id)];
+
+            while (freq_table2->size() > 0) {
+
+                std::pair<size_t,phrase_entry> phrase = *(freq_table2->begin());
+
+                //mail << "<<<(" << from << ")<<<" << phrase.second.p << " /" << freq_table2->size() << '\n';
+
+                // this is the hash of the complete phrase, this is what is written to the parse
+                if (freq_table1->find(phrase.first) == freq_table1->end()) { // new phrase
+
+                    freq_table1->emplace(phrase);
+                
+                } else { // known phrase
+
+                    freq_table1->at(phrase.first).occ += phrase.second.occ;
+                
+                    if (freq_table1->at(phrase.first).occ <= 0) {
+                        std::cerr << "(!) parse_debug : Max occurances reached in merge.\n";
+                        exit(1);
+                    }
+                    if (freq_table1->at(phrase.first).p != phrase.second.p) {
+                        std::cerr << "(!) parse_debug : Hash collision in merge.\n";// << (*freq)[hash].p << "\n" << phrase << "\n";
+                        exit(1);    
+                    }
+                }
+
+                freq_table2->erase(phrase.first);
             }
-        }   
+        }
+
+        /*
+        for (uint64_t phrase_start : (*(t->mail))[from + (NUM_THREADS * t->id)]) {
+
+            // init phrase
+            //std::string phrase("");
+            // init window
+            //KR_window window((int)w);
+            // seek to start of phrase
+            //mail << phrase_start << '\n';
+            fin.seekg(phrase_start - fin.tellg(),std::ios::cur);
+
+            // find two window instances or end of file.
+            
+            [[maybe_unused]] int c;
+            c = fin.get();
+
+            // Garunteed to have at least a window
+            for (size_t i = 0; i < w; i++) {
+                c = fin.get();
+                //phrase.append(1,c);
+                //window.addchar(c);
+            }
+
+            //phrase.erase();
+            bool phraseTerminated = false;
+            // go until next phrase
+            while((c = fin.get()) != EOF && !phraseTerminated) {
+
+                phrase.append(1,c);
+                window.addchar(c);
+
+                if (window.hash % p == 0) {
+                    mt_update_freq(t, phrase);
+                    phraseTerminated = true;
+                }
+            }
+
+            // must be last phrase
+            if (!phraseTerminated) {
+                phrase.append(w,'$');
+                mt_update_freq(t, phrase);
+            }
+            
+        }
+        */
     }
+
+    //fin.close();
     
-    uint64_t num_phrases = t->freq->size();
+
+    uint64_t num_phrases = freq_table1->size();
+    //mail << "\n\n" << freq_table1->size() << std::endl;
     if (num_phrases > (INT32_MAX - 1)) {
         std::cerr << "Emergency exit! The number of distinc phrases (" << num_phrases << ")\n";
         std::cerr << "is larger than the current limit (" << (INT32_MAX - 1) << ")\n";
@@ -238,21 +416,25 @@ void mt_write_dict(struct Thread *t, const std::string output_path, const size_t
     }
 
     // --------- second pass to create dictionary ---------
-    std::vector<const std::string *> dict; 
+    std::vector<uint64_t> dict; 
     dict.reserve(num_phrases);
 
     // fill dictionary using freq
     // time and memory consuming !!!
-    for (auto &p: *(t->freq)) dict.push_back(&p.second.p);
+    // std::pair<size_t,phrase_entry>
+    for (auto phrase : *freq_table1) {
+        //mail << phrase.second.p << std::endl;
+        dict.push_back(phrase.first);
+    }
     std::sort(dict.begin(), dict.end(), 
-        [](const std::string *p1, const std::string *p2) -> bool { 
-            return *p1 <= *p2; 
+        [freq_table1](const uint64_t p1, const uint64_t p2) -> bool { 
+            return freq_table1->find(p1)->second.p <= freq_table1->find(p2)->second.p; 
         });
 
+    //mail.close();
     mt_write_dict_occ(t, output_path, dict);
-    mt_overwrite_parse(t, output_path);
-    
 }
+
 
 // Theta (w)
 // all possible w-length strings
@@ -290,15 +472,21 @@ void mt_parse(const std::string input_path,
               const size_t p, 
               const size_t NUM_THREADS) {
 
-    std::cout << " ==== Building E" << std::endl;
+    //std::cout << " ==== Building E" << std::endl;
 
     std::unordered_map<uint64_t,size_t> E = buildEMap(w, p, NUM_THREADS);
 
     std::vector<Thread *> structs;
     std::vector<std::thread> threads;
-    std::vector<std::vector<std::string>> mail(NUM_THREADS * NUM_THREADS); // i -> j  :=  i + (th * j)
-    std::vector<std::unordered_map<size_t,phrase_entry> *> freqs;
+    //std::vector<std::vector<size_t>> mail(NUM_THREADS * NUM_THREADS); // i -> j  :=  i + (th * j)
+    std::vector<std::unordered_map<size_t,phrase_entry> *> mail(NUM_THREADS * NUM_THREADS); // i -> j  :=  i + (th * j)
+    //std::vector<std::vector<std::vector<size_t>>> mail(NUM_THREADS, std::vector<std::vector<size_t>>(NUM_THREADS)); // i -> j  :=  i + (th * j)
+    //std::vector<std::unordered_map<size_t,phrase_entry> *> freqs;
     std::latch sent{(std::ptrdiff_t)NUM_THREADS};
+    std::latch recieved{(std::ptrdiff_t)NUM_THREADS};
+
+
+    for (size_t i = 0; i < NUM_THREADS * NUM_THREADS; i++) mail[i] = new std::unordered_map<size_t,phrase_entry>;
 
     std::ifstream fin;
 	fin.open(input_path, std::ifstream::in | std::ifstream::ate);
@@ -308,11 +496,12 @@ void mt_parse(const std::string input_path,
 	}
     
     size_t file_size = fin.tellg();
+    //std::cout << fin.tellg() << '\n';
     fin.close();
 
     size_t work_size = file_size / NUM_THREADS;
 
-    std::cout << " ===== Beginning thread launch" << std::endl;
+    //std::cout << " ===== Beginning thread launch" << std::endl;
 
     for (size_t id = 0; id < NUM_THREADS; id++) {
         
@@ -329,8 +518,8 @@ void mt_parse(const std::string input_path,
         }
 
         // GOOD STUFF KEEP THIS
-        t->freq = new std::unordered_map<size_t,phrase_entry>;
-        freqs.push_back(t->freq);
+        //t->freq = new std::unordered_map<size_t,phrase_entry>;
+        //freqs.push_back(t->freq);
         t->mail = &mail;
         t->E = &E;
         
@@ -339,12 +528,23 @@ void mt_parse(const std::string input_path,
         //(*t.freqs)[id].p = "phrase";
         structs.push_back(t);
         
-        threads.push_back(std::thread([t, &sent, input_path, output_path, w, p, NUM_THREADS](){
+        threads.push_back(std::thread([t, &sent, &recieved, input_path, output_path, w, p, NUM_THREADS](){
+
             //send(id, NUM_THREADS, start, stop, mail);
+
             mt_write_parse(t, input_path, output_path, w, p, NUM_THREADS);
+            //std::cout << t->id << std::endl;
+            
             sent.count_down();
             sent.wait();
-            mt_write_dict(t, output_path, NUM_THREADS);
+            //std::cout << t->id << std::endl;
+
+            mt_write_dict(t, input_path, output_path, w, p, NUM_THREADS);
+
+            //recieved.count_down();
+            //recieved.wait();
+
+            //mt_overwrite_parse(t, freqs, output_path);
         }));
     }
 
@@ -384,10 +584,8 @@ void mt_parse(const std::string input_path,
     }
     */
 
-    for (Thread *t : structs) {
-        free(t->freq);
-        free(t);
-    }
+    for (std::unordered_map<size_t,phrase_entry> *freq_table : mail) free(freq_table);
+    for (Thread * t : structs) free(t);
 
 }
 

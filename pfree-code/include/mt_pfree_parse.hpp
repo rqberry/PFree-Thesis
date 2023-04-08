@@ -176,8 +176,9 @@ struct Thread {
     //size_t sent = 0;        // for debugging
     //size_t recieved = 0;        // for debugging
     //std::vector<std::map<size_t,phrase_entry>> *freqs;
-    std::unordered_map<size_t,phrase_entry> *freq; // make this unordered
-    std::vector<std::vector<std::string>> *mail;
+    //std::unordered_map<size_t,phrase_entry> *freq; // make this unordered
+    std::vector<std::unordered_map<size_t,phrase_entry> *> *mail;
+    //std::vector<std::vector<std::vector<size_t>>> *mail;
     std::unordered_map<uint64_t,size_t> *E;
 };
 
