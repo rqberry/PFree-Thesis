@@ -76,30 +76,37 @@ uint64_t mt_update_freq(std::unordered_map<size_t, phrase_entry> *freq_table, st
 
 // write data from sorted dictionary and frequency table to 
 // output files with .dict and .occ extensions
-/*
-void mt_write_dict_occ(struct Thread *t, const std::string output_path, std::vector<const std::string *> sorted_dict) {
-
-    assert(sorted_dict.size() == t->freq->size());
+void mt_write_dict_occ(struct Thread *t, const std::string output_path, std::vector<uint64_t> sorted_dict, const size_t NUM_THREADS) {
 
     // open output files for writing
     std::ofstream dict_out(output_path + "." + std::to_string(t->id) + ".dict", std::ofstream::out | std::fstream::binary);
     std::ofstream occ_out(output_path + "." + std::to_string(t->id) +  ".occ", std::ofstream::out | std::fstream::binary);
 
+    std::unordered_map<size_t,phrase_entry> *freq_table = (*(t->mail))[t->id + (NUM_THREADS * t->id)];
+
     uint32_t rank = 1;
-    for (auto p: sorted_dict) {
+    for (auto hash: sorted_dict) {
         // determine data
-        const char *phrase = (*p).data();
-        [[maybe_unused]] size_t len = (*p).size();
-        uint64_t hash = kr_hash64(*p);
+        //const char *phrase = (*p).data();
+        //[[maybe_unused]] size_t len = (*p).size();
+        //uint64_t hash = kr_hash64(*p);
         // write to dict
-        dict_out << phrase << '\n';
+        //dict_out << freq_table->at(hash).p << '\n';
+
+        dict_out.write(freq_table->at(hash).p.data(), freq_table->at(hash).p.size());
+
+        //occ_out << freq_table->at(hash).occ << '\n';
+
+        occ_out.write(reinterpret_cast<const char *>(&(freq_table->at(hash).occ)), sizeof(uint32_t));
+
+        freq_table->at(hash).rank = rank++;
         //dict_out.write(phrase, len);
         //dict_out.write("\n",1);
         // write to occ
         //occ_out.write(reinterpret_cast<const char *>(&(t->freq->at(hash).occ)), sizeof(uint32_t));
-        occ_out << t->freq->at(hash).occ;
+        //occ_out << t->freq->at(hash).occ;
         // update rank
-        t->freq->at(hash).rank = rank++;
+        //t->freq->at(hash).rank = rank++;
     }
 
     // flush and close output files
@@ -107,10 +114,10 @@ void mt_write_dict_occ(struct Thread *t, const std::string output_path, std::vec
     dict_out.close();
     occ_out.flush();
     occ_out.close();
-}*/
+}
 
 // overwrite the parse with the ranks of the strings
-void mt_overwrite_parse(struct Thread *t, const std::vector<std::unordered_map<size_t,phrase_entry> *> freqs,const std::string output_path) {
+void mt_overwrite_parse(struct Thread *t, const std::string output_path, const size_t NUM_THREADS) {
 
     // open old parse file for reading and new parse file for output
     std::ifstream parse_in(output_path + "." + std::to_string(t->id) + ".parse_old", std::ofstream::in | std::fstream::binary);
@@ -121,15 +128,14 @@ void mt_overwrite_parse(struct Thread *t, const std::vector<std::unordered_map<s
     while (parse_in.read(reinterpret_cast<char *>(&hash), sizeof(hash))) {
 
         bool foundHash = false;
-        size_t i = 0;
-        while(i < freqs.size() && !foundHash) {
+        for (size_t i = t->id; i < NUM_THREADS + t->id && !foundHash; i++) { // start at your own table for efficiency
         
-            if (freqs[i]->find(hash) != freqs[i]->end()) {
-                rank = freqs[i]->at(hash).rank;
+            std::unordered_map<size_t,phrase_entry> *freq_table = (*(t->mail))[(i % NUM_THREADS) + (NUM_THREADS * (i % NUM_THREADS))];
+
+            if (freq_table->find(hash) != freq_table->end()) {
+                rank = freq_table->at(hash).rank;
                 foundHash = true;
             }
-
-            i++;
         }
         assert(foundHash);
         parse_out.write(reinterpret_cast<char *>(&rank), sizeof(rank));
@@ -432,7 +438,7 @@ void mt_write_dict(struct Thread *t,
         });
 
     //mail.close();
-    mt_write_dict_occ(t, output_path, dict);
+    mt_write_dict_occ(t, output_path, dict, NUM_THREADS);
 }
 
 
@@ -541,10 +547,10 @@ void mt_parse(const std::string input_path,
 
             mt_write_dict(t, input_path, output_path, w, p, NUM_THREADS);
 
-            //recieved.count_down();
-            //recieved.wait();
+            recieved.count_down();
+            recieved.wait();
 
-            //mt_overwrite_parse(t, freqs, output_path);
+            mt_overwrite_parse(t, output_path, NUM_THREADS);
         }));
     }
 
