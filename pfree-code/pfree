@@ -20,7 +20,7 @@ work on this code are entirely for academic pruposes.
 
 dirname = os.path.dirname(os.path.abspath(__file__))
 parse_exe = os.path.join(dirname, "bin/parse")
-mt_parse_exe = os.path.join(dirname, "bin/mt_parse")
+mt_parse_exe = os.path.join(dirname, "bin/mt_lock")
 log_dir = os.path.join(dirname, "logs/")
 output_dir = os.path.join(dirname, "output/")
 
@@ -138,7 +138,7 @@ def main():
         # ---- delete intermediate files
         if args.k == False:
             print("==== Deleting temporary files.") # no need to show the command
-            command = "rm {output}.parse_old*".format(output=output_dir + file_name)
+            command = "rm {output}*.parse_old".format(output=output_dir + file_name)
             os.system(command)
 
     print("==== Done")
