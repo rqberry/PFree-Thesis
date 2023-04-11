@@ -2,7 +2,7 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -Werror -pedantic
 CPP=g++-11 -std=c++20
-CPPFLAGS=-Wall -Wextra -Werror -pedantic -ggdb
+CPPFLAGS=-Wall -Wextra -Werror -pedantic -O3
 
 OUT=output
 BIN=bin
@@ -12,7 +12,7 @@ INCLUDE=/mnt/c/Users/qberr/csci/reed/csci470/prefix-free/include
 
 OBJ=$(SRC:.cpp=.o)
 
-all: $(BIN)/parse $(BIN)/mt_parse $(BIN)/mt_lock
+all: $(BIN)/parse $(BIN)/mt_parse $(BIN)/mt_lock $(BIN)/mt_bigbwt
 
 $(BIN)/parse: $(SRC)/pfree_parse.cpp 
 		$(CPP) $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
@@ -21,6 +21,9 @@ $(BIN)/mt_parse: $(SRC)/mt_pfree_parse.cpp
 		$(CPP) -pthread $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
 
 $(BIN)/mt_lock: $(SRC)/mt_pfree_parse_locking.cpp 
+		$(CPP) -pthread $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
+
+$(BIN)/mt_bigbwt: $(SRC)/mt_pfree_parse_bigbwt.cpp 
 		$(CPP) -pthread $(CPPFLAGS) -I$(INCLUDE) $^ -o $@ 
 
 gsa/gsacak.o: gsa/gsacak.c gsa/gsacak.h
